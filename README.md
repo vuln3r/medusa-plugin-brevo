@@ -9,7 +9,11 @@ Notifications plugin for Medusa ecommerce server that sends transactional emails
 - Create PDF invoices and credit notes and attach them to the email
 - Send out upsell emails to customers that have recently placed an order with certain collections
 - Send out automated abandoned cart emails to customers that have abandoned their cart (based on last updated date of cart)
-- Support different languages base on countrycode or locale. (Need to add "locale or countryCode to cart context on frontend)
+- **Enhanced Multi-language Support**: Support different languages based on countryCode or locale with comprehensive regional formatting
+- **Advanced Locale Formatting**: Automatic date, number, and currency formatting based on customer locale
+- **Rich Order Data**: Enhanced order data with comprehensive product information, customer details, and regional formatting
+- **Robust Error Handling**: Graceful fallbacks for missing data and invalid configurations
+- **Template Compatibility**: Backward compatible with existing templates while providing enhanced data structure
 
 ## Configuration
 
@@ -207,6 +211,47 @@ const plugins = [
 ]
 ```
 
+## Enhanced Data Structure
+
+The plugin now provides rich, locale-aware data to your email templates. All templates receive enhanced order data including:
+
+### Order Data Enhancements
+- **Complete Product Information**: Full product details including variants, options, and metadata
+- **Customer Details**: Comprehensive customer information with regional preferences
+- **Locale-Aware Formatting**: Automatic formatting of dates, numbers, and currencies based on customer locale
+- **Regional Information**: Currency symbols, date formats, and number formats for the customer's region
+- **Backward Compatibility**: All existing template variables remain available
+
+### Available Template Variables
+
+#### Core Order Information
+- `order` - Complete order object with all details
+- `customer` - Customer information with regional preferences
+- `items` - Enhanced line items with product details and formatting
+- `shipping_address` - Formatted shipping address
+- `billing_address` - Formatted billing address
+
+#### Locale-Specific Formatting
+- `region_info` - Regional formatting information including:
+  - `locale` - Customer's locale (e.g., "en-US", "fr-FR")
+  - `currency_code` - Order currency code
+  - `currency_symbol` - Localized currency symbol
+  - `date_format_options` - Locale-specific date formatting options
+  - `number_format_options` - Locale-specific number formatting options
+
+#### Enhanced Item Data
+Each item in the `items` array includes:
+- `formatted_unit_price` - Locale-formatted unit price
+- `formatted_total` - Locale-formatted line total
+- `product_details` - Complete product information
+- `variant_details` - Variant-specific information
+- Raw values preserved for custom formatting
+
+#### Date and Time Formatting
+- `formatted_created_at` - Locale-formatted order creation date
+- `formatted_updated_at` - Locale-formatted last update date
+- All date fields include both raw and formatted versions
+
 ### Templates
 
 The plugin uses the BREVO template system for emails. For attachments the plugin relies on the [pdfkit](https://pdfkit.org/) library.  
@@ -339,6 +384,90 @@ This is used to draw a table row.
 You can use the same options as for `text` to style the text in the table row. If you want a special column styled, you can add the options to the column object.
 
 ```
+
+## Locale Configuration
+
+To enable locale-specific formatting, ensure your frontend passes locale information in the cart context:
+
+```js
+// Frontend cart context example
+const cartContext = {
+  locale: 'fr-FR', // or 'en-US', 'de-DE', etc.
+  countryCode: 'FR' // fallback if locale not available
+};
+```
+
+The plugin automatically detects and uses this information to:
+- Format dates according to locale conventions
+- Display currency amounts with proper symbols and formatting
+- Provide region-specific number formatting
+- Include locale information in template data
+
+## Template Examples
+
+### Using Enhanced Order Data
+
+```html
+<!-- Access locale-formatted prices -->
+<p>Total: {{region_info.currency_symbol}}{{formatted_total}}</p>
+
+<!-- Display formatted dates -->
+<p>Order Date: {{formatted_created_at}}</p>
+
+<!-- Loop through enhanced items -->
+{{#each items}}
+  <div>
+    <h3>{{product_details.title}}</h3>
+    <p>Price: {{formatted_unit_price}}</p>
+    <p>Quantity: {{quantity}}</p>
+    <p>Total: {{formatted_total}}</p>
+  </div>
+{{/each}}
+
+<!-- Regional information -->
+<p>Currency: {{region_info.currency_code}} ({{region_info.currency_symbol}})</p>
+<p>Locale: {{region_info.locale}}</p>
+```
+
+### Backward Compatibility
+
+All existing templates continue to work without modification. The plugin preserves all original data structure while adding enhanced information:
+
+```html
+<!-- Original template variables still work -->
+<p>Order ID: {{order.display_id}}</p>
+<p>Customer: {{customer.first_name}} {{customer.last_name}}</p>
+<p>Total: {{order.total}}</p>
+
+<!-- Enhanced data is available alongside -->
+<p>Formatted Total: {{formatted_total}}</p>
+<p>Currency Symbol: {{region_info.currency_symbol}}</p>
+```
+
+## Testing
+
+The plugin includes comprehensive tests covering:
+- Multi-language template selection
+- Locale-specific formatting
+- Enhanced order data structure
+- Error handling and fallbacks
+- Backward compatibility
+- PDF generation independence
+
+Run tests with:
+```bash
+npm test
+```
+
+## Recent Updates
+
+### Version 1.0.21+
+- **Enhanced Order Data**: Complete product information and customer details in all templates
+- **Advanced Locale Support**: Automatic formatting based on customer locale/country
+- **Regional Formatting**: Currency symbols, date formats, and number formats
+- **Improved Error Handling**: Graceful fallbacks for missing or invalid data
+- **Template Compatibility**: Full backward compatibility with existing templates
+- **Comprehensive Testing**: Extensive test coverage for all features
 
 ## Acknowledgement
 
