@@ -1,0 +1,227 @@
+<!-- Brevo Email Template for Glass Orders - Using Your Real Metadata -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Glasbestellung Bestätigung - {{display_id}}</title>
+    <style>
+        .glass-specs { background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .spec-item { margin: 5px 0; }
+        .price-highlight { color: #28a745; font-weight: bold; }
+        .custom-image { max-width: 200px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>Bestellbestätigung #{{display_id}}</h1>
+    
+    <p>Liebe/r {{customer.first_name}} {{customer.last_name}},</p>
+    <p>vielen Dank für Ihre Bestellung bei DeinGlas.at!</p>
+    
+    <!-- Order Status from Metadata -->
+    {{#if metadata.detailed_status}}
+        <div class="status-info">
+            <strong>Status:</strong> {{metadata.detailed_status}}
+        </div>
+    {{/if}}
+    
+    {{#if metadata.isPickup}}
+        <div class="pickup-info">
+            <strong>Abholung:</strong> {{#if metadata.isPickup}}Ja{{else}}Nein - Versand{{/if}}
+        </div>
+    {{/if}}
+
+    <h2>Ihre Glasbestellung</h2>
+    
+    {{#each items}}
+    <div class="glass-order-item">
+        <h3>{{title}}</h3>
+        <p><strong>Beschreibung:</strong> {{description}}</p>
+        
+        <!-- GLASS CUSTOMIZATION METADATA - This is your custom data! -->
+        {{#if metadata.price_attributes}}
+            <div class="glass-specs">
+                <h4>🔧 Ihre Glasspezifikationen:</h4>
+                
+                <!-- Glass Dimensions -->
+                {{#if metadata.price_attributes.info}}
+                    <div class="spec-item">
+                        <strong>📏 Abmessungen:</strong> 
+                        {{metadata.price_attributes.info.width}}mm × {{metadata.price_attributes.info.height}}mm
+                        ({{metadata.price_attributes.area}}m²)
+                    </div>
+                {{/if}}
+                
+                <!-- Glass Properties -->
+                <div class="spec-item">
+                    <strong>📐 Form:</strong> 
+                    {{#if metadata.price_attributes.shape}}
+                        {{#eq metadata.price_attributes.shape "square"}}Rechteck{{/eq}}
+                        {{#eq metadata.price_attributes.shape "circle"}}Kreis{{/eq}}
+                        {{#eq metadata.price_attributes.shape "triangle"}}Dreieck{{/eq}}
+                    {{/if}}
+                </div>
+                
+                <div class="spec-item">
+                    <strong>📏 Dicke:</strong> {{metadata.price_attributes.thickness}}
+                </div>
+                
+                <div class="spec-item">
+                    <strong>🎨 Glastyp:</strong> 
+                    {{#eq metadata.price_attributes.glass_type "ral_farbe"}}RAL Lackierung{{/eq}}
+                    {{#eq metadata.price_attributes.glass_type "klar"}}Standard (klar){{/eq}}
+                    {{#eq metadata.price_attributes.glass_type "matt"}}Satinato (matt){{/eq}}
+                </div>
+                
+                {{#if metadata.price_attributes.info.ral_code}}
+                    <div class="spec-item">
+                        <strong>🎨 RAL Code:</strong> {{metadata.price_attributes.info.ral_code}}
+                    </div>
+                {{/if}}
+                
+                <!-- Edge Processing -->
+                <div class="spec-item">
+                    <strong>✂️ Kantenschliff:</strong> 
+                    {{#eq metadata.price_attributes.fine_corners "yes"}}Geschliffen & Poliert{{/eq}}
+                    {{#eq metadata.price_attributes.fine_corners "no"}}Schnittkante{{/eq}}
+                </div>
+                
+                <!-- Special Features -->
+                {{#eq metadata.price_attributes.easy_to_clean "yes"}}
+                    <div class="spec-item">
+                        <strong>✨ EasyToClean Beschichtung:</strong> Ja
+                    </div>
+                {{/eq}}
+                
+                {{#eq metadata.price_attributes.express_delivery "yes"}}
+                    <div class="spec-item">
+                        <strong>🚀 Express-Lieferung:</strong> Ja
+                    </div>
+                {{/eq}}
+                
+                <!-- Holes/Drilling -->
+                {{#if metadata.price_attributes.hole_5_30}}
+                    <div class="spec-item">
+                        <strong>🕳️ Bohrungen ⌀ 5-30mm:</strong> {{metadata.price_attributes.hole_5_30}} Stück
+                    </div>
+                {{/if}}
+                
+                {{#if metadata.price_attributes.hole_32_40}}
+                    <div class="spec-item">
+                        <strong>🕳️ Bohrungen ⌀ 32-40mm:</strong> {{metadata.price_attributes.hole_32_40}} Stück
+                    </div>
+                {{/if}}
+                
+                {{#if metadata.price_attributes.hole_hinge}}
+                    <div class="spec-item">
+                        <strong>🕳️ Bänderbohrungen:</strong> {{metadata.price_attributes.hole_hinge}} Stück
+                    </div>
+                {{/if}}
+                
+                <!-- Custom Sketch -->
+                {{#if metadata.price_attributes.info.sketchFile}}
+                    <div class="spec-item">
+                        <strong>🖼️ Ihre Skizze:</strong><br>
+                        <img src="{{metadata.price_attributes.info.sketchFile}}" alt="Kundenspezifische Skizze" class="custom-image">
+                    </div>
+                {{/if}}
+            </div>
+        {{/if}}
+        
+        <!-- PRODUCT INFORMATION FROM METADATA -->
+        {{#if variant.product.metadata}}
+            <div class="product-info">
+                <h4>📋 Produktinformationen:</h4>
+                
+                {{#if variant.product.metadata.bullet_points}}
+                    <ul>
+                        {{#each variant.product.metadata.bullet_points}}
+                            <li>{{this}}</li>
+                        {{/each}}
+                    </ul>
+                {{/if}}
+                
+                {{#if variant.product.metadata.delivery_info}}
+                    <div class="spec-item">
+                        <strong>🚚 {{variant.product.metadata.delivery_info}}</strong>
+                    </div>
+                {{/if}}
+                
+                {{#if variant.product.metadata.vat_info}}
+                    <div class="spec-item">
+                        <em>{{variant.product.metadata.vat_info}}</em>
+                    </div>
+                {{/if}}
+            </div>
+        {{/if}}
+        
+        <!-- PRICING INFORMATION -->
+        <div class="pricing-info">
+            <div class="spec-item">
+                <strong>Menge:</strong> {{quantity}} Stück
+            </div>
+            
+            {{#if metadata.formattedPrice}}
+                <div class="spec-item price-highlight">
+                    <strong>Preis:</strong> {{metadata.formattedPrice}}
+                </div>
+            {{/if}}
+            
+            {{#if metadata.price_attributes.BASE_PRICE}}
+                <div class="spec-item">
+                    <strong>Basispreis:</strong> €{{#divide metadata.price_attributes.BASE_PRICE 100}}{{/divide}}
+                </div>
+            {{/if}}
+        </div>
+        
+        <!-- Product Image -->
+        {{#if thumbnail}}
+            <div class="product-image">
+                <img src="{{thumbnail}}" alt="{{title}}" style="max-width: 300px;">
+            </div>
+        {{/if}}
+    </div>
+    <hr>
+    {{/each}}
+    
+    <!-- ORDER TOTALS FROM METADATA -->
+    {{#if metadata.formattedPrices}}
+        <div class="order-totals">
+            <h3>💰 Bestellsumme</h3>
+            <div class="spec-item">
+                <strong>Zwischensumme:</strong> {{metadata.formattedPrices.total}}
+            </div>
+            <div class="spec-item">
+                <strong>MwSt. (20%):</strong> {{metadata.formattedPrices.tax_total}}
+            </div>
+            <div class="spec-item">
+                <strong>Versandkosten:</strong> {{metadata.formattedPrices.shipping_total}}
+            </div>
+            <div class="spec-item price-highlight">
+                <strong>Gesamtsumme:</strong> {{metadata.formattedPrices.total}}
+            </div>
+        </div>
+    {{/if}}
+    
+    <!-- BILLING ADDRESS WITH COMPANY INFO -->
+    {{#if billing_address}}
+        <div class="address-info">
+            <h3>📍 Rechnungsadresse</h3>
+            {{#if billing_address.company}}
+                <div><strong>{{billing_address.company}}</strong></div>
+                {{#if billing_address.metadata.company_uid}}
+                    <div><em>UID: {{billing_address.metadata.company_uid}}</em></div>
+                {{/if}}
+            {{/if}}
+            <div>{{billing_address.first_name}} {{billing_address.last_name}}</div>
+            <div>{{billing_address.address_1}}</div>
+            {{#if billing_address.address_2}}<div>{{billing_address.address_2}}</div>{{/if}}
+            <div>{{billing_address.postal_code}} {{billing_address.city}}</div>
+            {{#if billing_address.phone}}<div>Tel: {{billing_address.phone}}</div>{{/if}}
+        </div>
+    {{/if}}
+    
+    <div class="footer">
+        <p>Bei Fragen zu Ihrer Bestellung stehen wir Ihnen gerne zur Verfügung.</p>
+        <p>Ihr DeinGlas.at Team</p>
+    </div>
+</body>
+</html>

@@ -1,0 +1,146 @@
+<!-- Example Brevo Email Template showing how to use preserved metadata -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Order Confirmation with Custom Metadata</title>
+</head>
+<body>
+    <h1>Order Confirmation #{{display_id}}</h1>
+    
+    <h2>Order Items</h2>
+    {{#each items}}
+    <div class="item">
+        <h3>{{title}}</h3>
+        
+        <!-- Basic item info -->
+        <p>Quantity: {{quantity}}</p>
+        <p>Price: {{price}}</p>
+        
+        <!-- CUSTOM ITEM METADATA - This is what you're interested in! -->
+        {{#if metadata}}
+            {{#if metadata.gift_message}}
+                <div class="gift-message">
+                    <strong>Gift Message:</strong> {{metadata.gift_message}}
+                </div>
+            {{/if}}
+            
+            {{#if metadata.special_instructions}}
+                <div class="special-instructions">
+                    <strong>Special Instructions:</strong> {{metadata.special_instructions}}
+                </div>
+            {{/if}}
+            
+            {{#if metadata.personalization}}
+                <div class="personalization">
+                    <strong>Personalization:</strong> {{metadata.personalization}}
+                </div>
+            {{/if}}
+            
+            {{#if metadata.custom_engraving}}
+                <div class="engraving">
+                    <strong>Engraving:</strong> {{metadata.custom_engraving}}
+                </div>
+            {{/if}}
+        {{/if}}
+        
+        <!-- VARIANT METADATA - Custom variant options -->
+        {{#if variant.metadata}}
+            <div class="variant-details">
+                {{#if variant.metadata.size}}
+                    <span class="size">Size: {{variant.metadata.size}}</span>
+                {{/if}}
+                
+                {{#if variant.metadata.color}}
+                    <span class="color">Color: {{variant.metadata.color}}</span>
+                {{/if}}
+                
+                {{#if variant.metadata.material}}
+                    <span class="material">Material: {{variant.metadata.material}}</span>
+                {{/if}}
+                
+                {{#if variant.metadata.custom_options}}
+                    <div class="custom-options">
+                        <strong>Custom Options:</strong>
+                        {{#each variant.metadata.custom_options}}
+                            <span>{{@key}}: {{this}}</span>
+                        {{/each}}
+                    </div>
+                {{/if}}
+            </div>
+        {{/if}}
+        
+        <!-- PRODUCT METADATA - Brand, category, specifications -->
+        {{#if variant.product.metadata}}
+            <div class="product-details">
+                {{#if variant.product.metadata.brand}}
+                    <p><strong>Brand:</strong> {{variant.product.metadata.brand}}</p>
+                {{/if}}
+                
+                {{#if variant.product.metadata.category}}
+                    <p><strong>Category:</strong> {{variant.product.metadata.category}}</p>
+                {{/if}}
+                
+                {{#if variant.product.metadata.specifications}}
+                    <div class="specifications">
+                        <strong>Specifications:</strong>
+                        {{#each variant.product.metadata.specifications}}
+                            <span>{{@key}}: {{this}}</span>
+                        {{/each}}
+                    </div>
+                {{/if}}
+                
+                {{#if variant.product.metadata.care_instructions}}
+                    <div class="care-instructions">
+                        <strong>Care Instructions:</strong> {{variant.product.metadata.care_instructions}}
+                    </div>
+                {{/if}}
+                
+                {{#if variant.product.metadata.warranty}}
+                    <div class="warranty">
+                        <strong>Warranty:</strong> {{variant.product.metadata.warranty}}
+                    </div>
+                {{/if}}
+            </div>
+        {{/if}}
+        
+        <!-- PRICING METADATA - Custom pricing attributes -->
+        {{#if price_attributes}}
+            <div class="pricing-details">
+                <strong>Pricing Details:</strong>
+                {{#each price_attributes}}
+                    <span>{{@key}}: {{this}}</span>
+                {{/each}}
+            </div>
+        {{/if}}
+        
+        <!-- Product images from metadata -->
+        {{#if variant.product.images}}
+            <div class="product-images">
+                {{#each variant.product.images}}
+                    <img src="{{url}}" alt="Product image" style="width: 100px; height: 100px;">
+                {{/each}}
+            </div>
+        {{/if}}
+    </div>
+    <hr>
+    {{/each}}
+    
+    <!-- Order-level metadata -->
+    {{#if metadata}}
+        <div class="order-metadata">
+            <h3>Order Details</h3>
+            {{#if metadata.delivery_instructions}}
+                <p><strong>Delivery Instructions:</strong> {{metadata.delivery_instructions}}</p>
+            {{/if}}
+            
+            {{#if metadata.gift_order}}
+                <p><strong>Gift Order:</strong> Yes</p>
+            {{/if}}
+            
+            {{#if metadata.promotional_code}}
+                <p><strong>Promotional Code Used:</strong> {{metadata.promotional_code}}</p>
+            {{/if}}
+        </div>
+    {{/if}}
+</body>
+</html>

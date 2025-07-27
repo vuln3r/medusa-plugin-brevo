@@ -266,7 +266,8 @@ class BrevoService extends NotificationService {
             });
           }
         } catch (err) {
-          console.error(err);
+          console.error("PDF generation failed for user.password_reset:", err);
+          // Continue without PDF attachment - don't block notification
         }
         return attachments;
       }
@@ -292,7 +293,8 @@ class BrevoService extends NotificationService {
             );
           }
         } catch (err) {
-          console.error(err);
+          console.error("Return label generation failed:", err);
+          // Continue without return label - don't block notification
         }
 
         try {
@@ -308,28 +310,53 @@ class BrevoService extends NotificationService {
             });
           }
         } catch (err) {
-          console.error(err);
+          console.error("Return invoice PDF generation failed:", err);
+          // Continue without PDF attachment - don't block notification
         }
         return attachments;
       }
       case "order.placed": {
+        // Add configuration checks for PDF enablement before attempting PDF generation
+        const pdfEnabled = this.options_?.pdf?.enabled ?? false;
+        
+        if (!pdfEnabled) {
+          console.log("PDF generation is disabled in configuration");
+          return attachments; // Return empty attachments array
+        }
+
+        if (!attachmentGenerator) {
+          console.log("No attachment generator provided - skipping PDF generation");
+          return attachments;
+        }
+
+        if (!attachmentGenerator.createInvoice) {
+          console.log("Attachment generator does not support invoice creation - skipping PDF generation");
+          return attachments;
+        }
 
         try {
-          if ((this.options_?.pdf?.enabled ?? false) && attachmentGenerator && attachmentGenerator.createInvoice) {
-            const base64 = await attachmentGenerator.createInvoice(
-              this.options_,
-              data
-            );
-            attachments.push({
-              name: "invoice.pdf",
-              base64,
-              type: "application/pdf",
-            });
-          }
+          console.log("Attempting PDF generation for order.placed");
+          const base64 = await attachmentGenerator.createInvoice(
+            this.options_,
+            data
+          );
+          attachments.push({
+            name: "invoice.pdf",
+            base64,
+            type: "application/pdf",
+          });
+          console.log("PDF generation successful for order.placed");
         } catch (err) {
-
-          console.log('error ?', err);
-          console.error(err);
+          // Ensure PDF generation errors don't affect the main order data transmission
+          console.error("PDF generation failed for order.placed - continuing with order notification:", err);
+          // Log the specific error details for debugging
+          if (err.message) {
+            console.error("PDF generation error message:", err.message);
+          }
+          if (err.stack) {
+            console.error("PDF generation error stack:", err.stack);
+          }
+          // Continue without PDF attachment - don't block the main order notification
         }
         return attachments;
       }
@@ -368,17 +395,27 @@ class BrevoService extends NotificationService {
       if (typeof group === "undefined" || typeof action === "undefined" || this.options_.events[group] === undefined || this.options_.events[group][action] === undefined)
         return false;
     } catch (err) {
-      console.error(err);
+      console.error("Error parsing event or checking configuration:", err);
       return false;
     }
 
+    // Fetch order data first - this is the primary function
     const data = await this.fetchData(event, eventData, attachmentGenerator);
-    //console.log('Data', data)
-    const attachments = await this.fetchAttachments(
-      event,
-      data,
-      attachmentGenerator
-    );
+    
+    // Fetch attachments independently - failures here should not affect data transmission
+    let attachments = [];
+    try {
+      attachments = await this.fetchAttachments(
+        event,
+        data,
+        attachmentGenerator
+      );
+      console.log(`Attachment processing completed for ${event}. Attachments count: ${attachments?.length || 0}`);
+    } catch (err) {
+      // Log attachment failures but continue with notification
+      console.error(`Attachment generation failed for ${event} - continuing with notification:`, err);
+      attachments = []; // Ensure attachments is always an array
+    }
 
     let templateId = this.options_.events[group][action];
 
@@ -409,25 +446,38 @@ class BrevoService extends NotificationService {
         ...this.options_.default_data
       }
     };
-    //console.log('sendOptions', sendOptions)
+    
     if (this.options_?.bcc)
       sendOptions.Bcc = this.options_.bcc;
 
-    if (attachments?.length) {
-      sendOptions.Attachments = attachments.map((a) => {
-        return {
-          content: a.base64,
-          Name: a.name,
-          ContentType: a.type,
-          ContentID: `cid:${a.name}`,
-        };
-      });
+    // Only add attachments if they exist and are valid
+    if (attachments && attachments.length > 0) {
+      try {
+        sendOptions.Attachments = attachments.map((a) => {
+          return {
+            content: a.base64,
+            Name: a.name,
+            ContentType: a.type,
+            ContentID: `cid:${a.name}`,
+          };
+        });
+        console.log(`Added ${attachments.length} attachment(s) to ${event} notification`);
+      } catch (err) {
+        console.error(`Error processing attachments for ${event} - sending without attachments:`, err);
+        // Remove attachments from sendOptions if processing fails
+        delete sendOptions.Attachments;
+      }
+    } else {
+      console.log(`No attachments to include for ${event} notification`);
     }
 
     return await this.client_.sendTransacEmail(sendOptions)
-      .then(() => ({ to: sendOptions.to, status: 'sent', data: sendOptions }))
+      .then(() => {
+        console.log(`Successfully sent ${event} notification`);
+        return { to: sendOptions.to, status: 'sent', data: sendOptions };
+      })
       .catch((error) => {
-        console.error(error);
+        console.error(`Failed to send ${event} notification:`, error);
         return { to: sendOptions.to, status: 'failed', data: sendOptions };
       });
   }
@@ -651,133 +701,564 @@ class BrevoService extends NotificationService {
     };
   }
   async orderPlacedData({ id }) {
-    const order = await this.orderService_.retrieve(id, {
-      select: [
-        "shipping_total",
-        "discount_total",
-        "tax_total",
-        "refunded_total",
-        "gift_card_total",
-        "subtotal",
-        "total",
-      ],
-      relations: [
-        "customer",
-        "billing_address",
-        "shipping_address",
-        "discounts",
-        "discounts.rule",
-        "shipping_methods",
-        "shipping_methods.shipping_option",
-        "payments",
-        "fulfillments",
-        "returns",
-        "gift_cards",
-        "gift_card_transactions",
-      ],
-    });
+    let order;
+    
+    // Implement try-catch blocks around enhanced data retrieval with fallback to minimal data
+    try {
+      console.log(`Attempting to retrieve enhanced order data for order ${id}`);
+      order = await this.orderService_.retrieve(id, {
+        // Include all order fields instead of limited set
+        select: [
+          "id",
+          "status",
+          "fulfillment_status", 
+          "payment_status",
+          "display_id",
+          "cart_id",
+          "customer_id",
+          "email",
+          "billing_address_id",
+          "shipping_address_id",
+          "region_id",
+          "currency_code",
+          "tax_rate",
+          "canceled_at",
+          "metadata",
+          "no_notification",
+          "idempotency_key",
+          "draft_order_id",
+          "created_at",
+          "updated_at",
+          "shipping_total",
+          "discount_total",
+          "tax_total",
+          "refunded_total",
+          "gift_card_total",
+          "subtotal",
+          "total",
+          "paid_total",
+          "refundable_amount",
+          "external_id",
+          "sales_channel_id"
+        ],
+        // Add comprehensive relations including items.variant.product and all nested relationships
+        relations: [
+          "customer",
+          "billing_address",
+          "shipping_address",
+          "discounts",
+          "discounts.rule",
+          "shipping_methods",
+          "shipping_methods.shipping_option",
+          "payments",
+          "fulfillments",
+          "returns",
+          "gift_cards",
+          "gift_card_transactions",
+          "items",
+          "items.variant",
+          "items.variant.product",
+          "items.variant.product.profiles",
+          "items.adjustments",
+          "items.tax_lines",
+          "region",
+          "sales_channel",
+          "claims",
+          "swaps"
+        ],
+      });
+      console.log(`Successfully retrieved enhanced order data for order ${id}`);
+    } catch (enhancedRetrievalError) {
+      // Add logging for data retrieval failures without blocking notification sending
+      console.error(`Enhanced order data retrieval failed for order ${id}, falling back to minimal data:`, enhancedRetrievalError);
+      
+      try {
+        // Fallback to minimal data approach (similar to original implementation)
+        console.log(`Attempting fallback to minimal order data for order ${id}`);
+        order = await this.orderService_.retrieve(id, {
+          select: [
+            "shipping_total",
+            "discount_total", 
+            "tax_total",
+            "refunded_total",
+            "gift_card_total",
+            "subtotal",
+            "total",
+            "currency_code",
+            "tax_rate",
+            "created_at",
+            "email",
+            "id",
+            "display_id"
+          ],
+          relations: [
+            "customer",
+            "billing_address",
+            "shipping_address",
+            "discounts",
+            "discounts.rule",
+            "shipping_methods",
+            "shipping_methods.shipping_option",
+            "payments",
+            "fulfillments",
+            "returns",
+            "gift_cards",
+            "gift_card_transactions",
+          ],
+        });
+        console.log(`Successfully retrieved minimal order data for order ${id}`);
+      } catch (minimalRetrievalError) {
+        console.error(`Both enhanced and minimal order data retrieval failed for order ${id}:`, minimalRetrievalError);
+        throw new Error(`Unable to retrieve order data for order ${id}: ${minimalRetrievalError.message}`);
+      }
+    }
 
     const { tax_total, shipping_total, gift_card_total, total } = order;
 
     const currencyCode = order.currency_code.toUpperCase();
 
-    const items = await Promise.all(
-      order.items.map(async (i) => {
-        i.totals = await this.totalsService_.getLineItemTotals(i, order, {
-          include_tax: true,
-          use_tax_lines: true,
-        });
-        i.thumbnail = this.normalizeThumbUrl_(i.thumbnail);
-        i.discounted_price = `${this.humanPrice_(
-          i.totals.total / i.quantity,
-          currencyCode
-        )} ${currencyCode}`;
-        i.price = `${this.humanPrice_(
-          i.totals.original_total / i.quantity,
-          currencyCode
-        )} ${currencyCode}`;
-        return i;
-      })
-    );
+    let items = [];
+    
+    // Create graceful handling for missing relations or metadata fields
+    try {
+      console.log(`Processing ${order.items?.length || 0} items for order ${id}`);
+      
+      // Check if items exist and have the expected structure
+      if (!order.items || !Array.isArray(order.items)) {
+        console.warn(`Order ${id} has no items or items is not an array, using empty items array`);
+        items = [];
+      } else {
+        items = await Promise.all(
+          order.items.map(async (originalItem, index) => {
+            try {
+              // Calculate totals for the item with error handling
+              let totals;
+              try {
+                totals = await this.totalsService_.getLineItemTotals(originalItem, order, {
+                  include_tax: true,
+                  use_tax_lines: true,
+                });
+              } catch (totalsError) {
+                console.error(`Failed to calculate totals for item ${index} in order ${id}:`, totalsError);
+                // Fallback to basic totals calculation
+                totals = {
+                  total: originalItem.unit_price * originalItem.quantity,
+                  original_total: originalItem.unit_price * originalItem.quantity,
+                  subtotal: originalItem.unit_price * originalItem.quantity,
+                  tax_total: 0,
+                  discount_total: 0
+                };
+              }
 
+              // Preserve all original item fields and metadata while adding calculated values
+              const processedItem = {
+                ...originalItem, // All original item fields including metadata, adjustments, tax_lines
+                
+                // Create graceful handling for missing relations or metadata fields
+                // Preserve complete variant data including metadata and price_attributes
+                variant: originalItem.variant ? {
+                  ...originalItem.variant,
+                  metadata: originalItem.variant?.metadata || {},
+                  // Preserve any price_attributes from variant metadata
+                  price_attributes: originalItem.variant?.metadata?.price_attributes || null,
+                  
+                  // Include complete product information with descriptions, images, and metadata
+                  product: originalItem.variant?.product ? {
+                    ...originalItem.variant.product,
+                    metadata: originalItem.variant.product?.metadata || {},
+                    // Preserve product descriptions, images, and all attributes
+                    description: originalItem.variant.product?.description || null,
+                    images: originalItem.variant.product?.images || [],
+                    thumbnail: originalItem.variant.product?.thumbnail || null,
+                    profiles: originalItem.variant.product?.profiles || []
+                  } : null
+                } : null,
+
+                // Add calculated totals while preserving original data
+                totals,
+                
+                // Add formatted prices while preserving original pricing data
+                discounted_price: `${this.humanPrice_(
+                  totals.total / (originalItem.quantity || 1),
+                  currencyCode
+                )} ${currencyCode}`,
+                price: `${this.humanPrice_(
+                  totals.original_total / (originalItem.quantity || 1),
+                  currencyCode
+                )} ${currencyCode}`,
+                
+                // Normalize thumbnail URL while preserving original
+                thumbnail: this.normalizeThumbUrl_(originalItem.thumbnail),
+                
+                // Ensure metadata and price_attributes are accessible at item level for template convenience
+                // (Note: these are already preserved in ...originalItem but made explicit for clarity)
+                metadata: originalItem.metadata || {},
+                price_attributes: originalItem.metadata?.price_attributes || null
+              };
+
+              return processedItem;
+            } catch (itemProcessingError) {
+              console.error(`Failed to process item ${index} in order ${id}:`, itemProcessingError);
+              // Return a minimal item structure to prevent complete failure
+              return {
+                ...originalItem,
+                variant: originalItem.variant || null,
+                totals: {
+                  total: originalItem.unit_price * originalItem.quantity,
+                  original_total: originalItem.unit_price * originalItem.quantity,
+                  subtotal: originalItem.unit_price * originalItem.quantity,
+                  tax_total: 0,
+                  discount_total: 0
+                },
+                discounted_price: `${this.humanPrice_(originalItem.unit_price, currencyCode)} ${currencyCode}`,
+                price: `${this.humanPrice_(originalItem.unit_price, currencyCode)} ${currencyCode}`,
+                thumbnail: this.normalizeThumbUrl_(originalItem.thumbnail),
+                metadata: originalItem.metadata || {},
+                price_attributes: null
+              };
+            }
+          })
+        );
+      }
+      console.log(`Successfully processed ${items.length} items for order ${id}`);
+    } catch (itemsProcessingError) {
+      console.error(`Failed to process items for order ${id}:`, itemsProcessingError);
+      // Fallback to basic item processing if enhanced processing fails
+      try {
+        items = this.processItems_(order.items || [], order.tax_rate / 100, currencyCode);
+        console.log(`Fallback item processing successful for order ${id}`);
+      } catch (fallbackError) {
+        console.error(`Fallback item processing also failed for order ${id}:`, fallbackError);
+        items = []; // Use empty array as final fallback
+      }
+    }
+
+    // Create graceful handling for missing relations or metadata fields
     let discounts = [];
-    if (order.discounts) {
-      discounts = order.discounts.map((discount) => {
-        return {
-          is_giftcard: false,
-          code: discount.code,
-          descriptor: `${discount.rule.value}${
-            discount.rule.type === "percentage" ? "%" : ` ${currencyCode}`
-          }`,
-        };
-      });
+    try {
+      if (order.discounts && Array.isArray(order.discounts)) {
+        discounts = order.discounts.map((discount, index) => {
+          try {
+            return {
+              is_giftcard: false,
+              code: discount.code || `discount_${index}`,
+              descriptor: `${discount.rule?.value || 0}${
+                discount.rule?.type === "percentage" ? "%" : ` ${currencyCode}`
+              }`,
+            };
+          } catch (discountError) {
+            console.error(`Failed to process discount ${index} for order ${id}:`, discountError);
+            return {
+              is_giftcard: false,
+              code: `discount_${index}`,
+              descriptor: `0 ${currencyCode}`,
+            };
+          }
+        });
+      }
+    } catch (discountsError) {
+      console.error(`Failed to process discounts for order ${id}:`, discountsError);
+      discounts = [];
     }
 
     let giftCards = [];
-    if (order.gift_cards) {
-      giftCards = order.gift_cards.map((gc) => {
-        return {
-          is_giftcard: true,
-          code: gc.code,
-          descriptor: `${gc.value} ${currencyCode}`,
-        };
-      });
+    try {
+      if (order.gift_cards && Array.isArray(order.gift_cards)) {
+        giftCards = order.gift_cards.map((gc, index) => {
+          try {
+            return {
+              is_giftcard: true,
+              code: gc.code || `giftcard_${index}`,
+              descriptor: `${gc.value || 0} ${currencyCode}`,
+            };
+          } catch (giftCardError) {
+            console.error(`Failed to process gift card ${index} for order ${id}:`, giftCardError);
+            return {
+              is_giftcard: true,
+              code: `giftcard_${index}`,
+              descriptor: `0 ${currencyCode}`,
+            };
+          }
+        });
 
-      discounts.concat(giftCards);
+        discounts.concat(giftCards);
+      }
+    } catch (giftCardsError) {
+      console.error(`Failed to process gift cards for order ${id}:`, giftCardsError);
+      giftCards = [];
     }
 
-    const locale = await this.extractLocale(order);
+    // Extract locale information and include comprehensive regional formatting data
+    let locale;
+    let regionInfo = {};
+    try {
+      locale = await this.extractLocale(order);
+      console.log(`Successfully extracted locale for order ${id}:`, locale);
+      
+      // Include comprehensive regional and currency information
+      regionInfo = {
+        currency_code: currencyCode,
+        region: order.region ? {
+          ...order.region,
+          currency_code: order.region.currency_code,
+          tax_rate: order.region.tax_rate,
+          includes_tax: order.region.includes_tax,
+          metadata: order.region.metadata || {}
+        } : null,
+        // Include locale-specific formatting information
+        locale_info: {
+          locale: locale?.locale || 'en',
+          country_code: locale?.countryCode || 'US',
+          currency_code: currencyCode,
+          // Add regional formatting context
+          date_format: this.getDateFormatForLocale(locale?.locale || 'en'),
+          number_format: this.getNumberFormatForLocale(locale?.locale || 'en', currencyCode)
+        }
+      };
+    } catch (localeError) {
+      console.error(`Failed to extract locale for order ${id}:`, localeError);
+      // Provide fallback locale information with regional data
+      locale = { 
+        locale: 'en', 
+        countryCode: 'US' 
+      };
+      regionInfo = {
+        currency_code: currencyCode,
+        region: order.region || null,
+        locale_info: {
+          locale: 'en',
+          country_code: 'US',
+          currency_code: currencyCode,
+          date_format: this.getDateFormatForLocale('en'),
+          number_format: this.getNumberFormatForLocale('en', currencyCode)
+        }
+      };
+    }
 
-    // Includes taxes in discount amount
-    const discountTotal = items.reduce((acc, i) => {
-      return acc + i.totals.original_total - i.totals.total;
-    }, 0);
+    // Create graceful handling for missing relations or metadata fields
+    let discountTotal = 0;
+    let discounted_subtotal = 0;
+    let subtotal = 0;
+    let subtotal_ex_tax = 0;
+    
+    try {
+      // Includes taxes in discount amount
+      discountTotal = items.reduce((acc, i) => {
+        try {
+          return acc + (i.totals?.original_total || 0) - (i.totals?.total || 0);
+        } catch (itemTotalError) {
+          console.error(`Failed to calculate discount total for item in order ${id}:`, itemTotalError);
+          return acc;
+        }
+      }, 0);
 
-    const discounted_subtotal = items.reduce((acc, i) => {
-      return acc + i.totals.total;
-    }, 0);
-    const subtotal = items.reduce((acc, i) => {
-      return acc + i.totals.original_total;
-    }, 0);
+      discounted_subtotal = items.reduce((acc, i) => {
+        try {
+          return acc + (i.totals?.total || 0);
+        } catch (itemTotalError) {
+          console.error(`Failed to calculate discounted subtotal for item in order ${id}:`, itemTotalError);
+          return acc;
+        }
+      }, 0);
+      
+      subtotal = items.reduce((acc, i) => {
+        try {
+          return acc + (i.totals?.original_total || 0);
+        } catch (itemTotalError) {
+          console.error(`Failed to calculate subtotal for item in order ${id}:`, itemTotalError);
+          return acc;
+        }
+      }, 0);
 
-    const subtotal_ex_tax = items.reduce((total, i) => {
-      return total + i.totals.subtotal;
-    }, 0);
+      subtotal_ex_tax = items.reduce((total, i) => {
+        try {
+          return total + (i.totals?.subtotal || 0);
+        } catch (itemTotalError) {
+          console.error(`Failed to calculate subtotal ex tax for item in order ${id}:`, itemTotalError);
+          return total;
+        }
+      }, 0);
+    } catch (totalsCalculationError) {
+      console.error(`Failed to calculate order totals for order ${id}:`, totalsCalculationError);
+      // Use order-level totals as fallback
+      discountTotal = order.discount_total || 0;
+      discounted_subtotal = order.subtotal || 0;
+      subtotal = order.subtotal || 0;
+      subtotal_ex_tax = order.subtotal || 0;
+    }
 
 
-    //console.log(`TOTAL ${this.humanPrice_(total, currencyCode)} ${currencyCode}`,)
-    return {
-      ...order,
-      locale,
-      has_discounts: order.discounts.length,
-      has_gift_cards: order.gift_cards.length,
-      date: order.created_at.toLocaleString(),
-      items,
-      discounts,
-      subtotal_ex_tax: `${this.humanPrice_(
-        subtotal_ex_tax,
-        currencyCode
-      )} ${currencyCode}`,
-      subtotal: `${this.humanPrice_(subtotal, currencyCode)} ${currencyCode}`,
-      gift_card_total: `${this.humanPrice_(
-        gift_card_total,
-        currencyCode
-      )} ${currencyCode}`,
-      tax_total: `${this.humanPrice_(tax_total, currencyCode)} ${currencyCode}`,
-      discount_total: `${this.humanPrice_(
-        discountTotal,
-        currencyCode
-      )} ${currencyCode}`,
-      shipping_total: `${this.humanPrice_(
-        shipping_total,
-        currencyCode
-      )} ${currencyCode}`,
-      shipping_total_inc: `${this.humanPrice_(
-        order?.shipping_methods[0]?.price || shipping_total,
-        currencyCode
-      )} ${currencyCode}`,
-      total: `${this.humanPrice_(total, currencyCode)} ${currencyCode}`,
-    };
+    // Create graceful handling for missing relations or metadata fields
+    try {
+      console.log(`Constructing final order data object for order ${id}`);
+      
+      const orderData = {
+        ...order,
+        locale,
+        // Include comprehensive regional and formatting information
+        region_info: regionInfo,
+        has_discounts: order.discounts?.length || 0,
+        has_gift_cards: order.gift_cards?.length || 0,
+        
+        // Include both raw timestamps and formatted date strings
+        date: order.created_at ? order.created_at.toLocaleString() : new Date().toLocaleString(),
+        date_raw: order.created_at || new Date(),
+        created_at_formatted: order.created_at ? 
+          order.created_at.toLocaleString(locale?.locale || 'en', {
+            year: 'numeric',
+            month: '2-digit', 
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZoneName: 'short'
+          }) : new Date().toLocaleString(),
+        updated_at_formatted: order.updated_at ?
+          order.updated_at.toLocaleString(locale?.locale || 'en', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit', 
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZoneName: 'short'
+          }) : null,
+        
+        items,
+        discounts,
+        
+        // Ensure order.metadata is explicitly included in the returned data structure
+        metadata: order.metadata || {},
+        
+        // Include complete customer object with all fields and metadata
+        customer: order.customer ? {
+          ...order.customer,
+          metadata: order.customer.metadata || {}
+        } : null,
+        
+        // Preserve billing_address complete object with metadata
+        billing_address: order.billing_address ? {
+          ...order.billing_address,
+          metadata: order.billing_address.metadata || {}
+        } : null,
+        
+        // Preserve shipping_address complete object with metadata  
+        shipping_address: order.shipping_address ? {
+          ...order.shipping_address,
+          metadata: order.shipping_address.metadata || {}
+        } : null,
+        
+        // Maintain both raw values and formatted strings for prices
+        subtotal_ex_tax: `${this.humanPrice_(
+          subtotal_ex_tax,
+          currencyCode
+        )} ${currencyCode}`,
+        subtotal_ex_tax_raw: subtotal_ex_tax,
+        subtotal: `${this.humanPrice_(subtotal, currencyCode)} ${currencyCode}`,
+        subtotal_raw: subtotal,
+        gift_card_total: `${this.humanPrice_(
+          gift_card_total || 0,
+          currencyCode
+        )} ${currencyCode}`,
+        gift_card_total_raw: gift_card_total || 0,
+        tax_total: `${this.humanPrice_(tax_total || 0, currencyCode)} ${currencyCode}`,
+        tax_total_raw: tax_total || 0,
+        discount_total: `${this.humanPrice_(
+          discountTotal,
+          currencyCode
+        )} ${currencyCode}`,
+        discount_total_raw: discountTotal,
+        shipping_total: `${this.humanPrice_(
+          shipping_total || 0,
+          currencyCode
+        )} ${currencyCode}`,
+        shipping_total_raw: shipping_total || 0,
+        shipping_total_inc: `${this.humanPrice_(
+          order?.shipping_methods?.[0]?.price || shipping_total || 0,
+          currencyCode
+        )} ${currencyCode}`,
+        shipping_total_inc_raw: order?.shipping_methods?.[0]?.price || shipping_total || 0,
+        total: `${this.humanPrice_(total || 0, currencyCode)} ${currencyCode}`,
+        total_raw: total || 0,
+        
+        // Include currency codes and regional formatting information
+        currency: {
+          code: currencyCode,
+          symbol: this.getCurrencySymbol(currencyCode, locale?.locale || 'en'),
+          formatted_sample: this.humanPrice_(1000, currencyCode),
+          locale_specific_format: new Intl.NumberFormat(locale?.locale || 'en', {
+            style: 'currency',
+            currency: currencyCode
+          }).format(1000)
+        }
+      };
+      
+      console.log(`Successfully constructed order data for order ${id}`);
+      return orderData;
+    } catch (dataConstructionError) {
+      console.error(`Failed to construct final order data for order ${id}:`, dataConstructionError);
+      
+      // Return minimal fallback data structure with enhanced locale and formatting
+      return {
+        id: order.id,
+        email: order.email,
+        display_id: order.display_id,
+        currency_code: currencyCode,
+        
+        // Include both raw values and formatted strings for prices
+        total: `${this.humanPrice_(total || 0, currencyCode)} ${currencyCode}`,
+        total_raw: total || 0,
+        subtotal: `${this.humanPrice_(subtotal || 0, currencyCode)} ${currencyCode}`,
+        subtotal_raw: subtotal || 0,
+        tax_total: `${this.humanPrice_(tax_total || 0, currencyCode)} ${currencyCode}`,
+        tax_total_raw: tax_total || 0,
+        shipping_total: `${this.humanPrice_(shipping_total || 0, currencyCode)} ${currencyCode}`,
+        shipping_total_raw: shipping_total || 0,
+        discount_total: `${this.humanPrice_(discountTotal || 0, currencyCode)} ${currencyCode}`,
+        discount_total_raw: discountTotal || 0,
+        gift_card_total: `${this.humanPrice_(gift_card_total || 0, currencyCode)} ${currencyCode}`,
+        gift_card_total_raw: gift_card_total || 0,
+        
+        // Include both raw timestamps and formatted date strings
+        date: order.created_at ? order.created_at.toLocaleString() : new Date().toLocaleString(),
+        date_raw: order.created_at || new Date(),
+        created_at_formatted: order.created_at ? 
+          order.created_at.toLocaleString(locale?.locale || 'en') : new Date().toLocaleString(),
+        
+        items: items || [],
+        discounts: discounts || [],
+        has_discounts: 0,
+        has_gift_cards: 0,
+        locale: locale || { locale: 'en', countryCode: 'US' },
+        
+        // Include comprehensive regional and formatting information
+        region_info: {
+          currency_code: currencyCode,
+          region: null,
+          locale_info: {
+            locale: 'en',
+            country_code: 'US',
+            currency_code: currencyCode,
+            date_format: this.getDateFormatForLocale('en'),
+            number_format: this.getNumberFormatForLocale('en', currencyCode)
+          }
+        },
+        
+        // Include currency codes and regional formatting information
+        currency: {
+          code: currencyCode,
+          symbol: this.getCurrencySymbol(currencyCode, locale?.locale || 'en'),
+          formatted_sample: this.humanPrice_(1000, currencyCode),
+          locale_specific_format: new Intl.NumberFormat(locale?.locale || 'en', {
+            style: 'currency',
+            currency: currencyCode
+          }).format(1000)
+        },
+        
+        metadata: {},
+        customer: null,
+        billing_address: null,
+        shipping_address: null
+      };
+    }
   }
 
   userPasswordResetData(data) {
@@ -865,6 +1346,122 @@ class BrevoService extends NotificationService {
       }
     }
     return { locale: null, countryCode: null };
+  }
+
+  // Helper method to get date format information for a locale
+  getDateFormatForLocale(locale) {
+    try {
+      const sampleDate = new Date('2024-01-15T10:30:00Z');
+      const formatter = new Intl.DateTimeFormat(locale || 'en', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZoneName: 'short'
+      });
+      
+      return {
+        locale: locale || 'en',
+        sample_format: formatter.format(sampleDate),
+        options: {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          timeZoneName: 'short'
+        }
+      };
+    } catch (error) {
+      console.error(`Error getting date format for locale ${locale}:`, error);
+      return {
+        locale: 'en',
+        sample_format: '01/15/2024, 10:30 AM GMT',
+        options: {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          timeZoneName: 'short'
+        }
+      };
+    }
+  }
+
+  // Helper method to get number format information for a locale and currency
+  getNumberFormatForLocale(locale, currencyCode) {
+    try {
+      const sampleAmount = 1234.56;
+      const currencyFormatter = new Intl.NumberFormat(locale || 'en', {
+        style: 'currency',
+        currency: currencyCode,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+      
+      const numberFormatter = new Intl.NumberFormat(locale || 'en', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+      
+      return {
+        locale: locale || 'en',
+        currency_code: currencyCode,
+        sample_currency_format: currencyFormatter.format(sampleAmount),
+        sample_number_format: numberFormatter.format(sampleAmount),
+        currency_options: {
+          style: 'currency',
+          currency: currencyCode,
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        },
+        number_options: {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        }
+      };
+    } catch (error) {
+      console.error(`Error getting number format for locale ${locale} and currency ${currencyCode}:`, error);
+      return {
+        locale: 'en',
+        currency_code: currencyCode,
+        sample_currency_format: `${currencyCode} 1,234.56`,
+        sample_number_format: '1,234.56',
+        currency_options: {
+          style: 'currency',
+          currency: currencyCode,
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        },
+        number_options: {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        }
+      };
+    }
+  }
+
+  // Helper method to get currency symbol for a given currency code and locale
+  getCurrencySymbol(currencyCode, locale) {
+    try {
+      const formatter = new Intl.NumberFormat(locale || 'en', {
+        style: 'currency',
+        currency: currencyCode,
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+      });
+      
+      // Format 0 to get just the currency symbol
+      const formatted = formatter.format(0);
+      // Extract symbol by removing the number
+      const symbol = formatted.replace(/[\d\s,]/g, '');
+      return symbol || currencyCode;
+    } catch (error) {
+      console.error(`Error getting currency symbol for ${currencyCode} in locale ${locale}:`, error);
+      return currencyCode;
+    }
   }
   
 }
